@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"sync"
 )
 
@@ -53,6 +54,51 @@ func main() {
 	}
 
 	compare(parameters[0], parameters[1])
+
+	// Now we sort the results and print them
+	if len(elementsIn1Only) != 0 {
+		sort.Strings(elementsIn1Only)
+		fmt.Println("Elements in path 1 only:")
+		for _, path := range elementsIn1Only {
+			fmt.Println(path)
+		}
+	}
+
+	if len(elementsIn2Only) != 0 {
+		sort.Strings(elementsIn2Only)
+		fmt.Println("Elements in path 2 only:")
+		for _, path := range elementsIn2Only {
+			fmt.Println(path)
+		}
+	}
+
+	if len(elementsInError) != 0 {
+		sort.Strings(elementsInError)
+		fmt.Println("Elements that couldn't be opened and the errors returned:")
+		for _, path := range elementsInError {
+			fmt.Println(path)
+		}
+	}
+
+	if len(elementsWhichAreDifferent) != 0 {
+		sort.Slice(elementsWhichAreDifferent, func(i, j int) bool {
+			return elementsWhichAreDifferent[i].path1 < elementsWhichAreDifferent[j].path1
+		})
+		fmt.Println("Pairs which are different between path 1 and path 2:")
+		for _, paths := range elementsWhichAreDifferent {
+			fmt.Println(paths.path1 + ", " + paths.path2)
+		}
+	}
+
+	if len(elementsWhichAreEqual) != 0 {
+		sort.Slice(elementsWhichAreEqual, func(i, j int) bool {
+			return elementsWhichAreEqual[i].path1 < elementsWhichAreEqual[j].path1
+		})
+		fmt.Println("Pairs which are the same between path 1 and path 2:")
+		for _, paths := range elementsWhichAreEqual {
+			fmt.Println(paths.path1 + ", " + paths.path2)
+		}
+	}
 
 	os.Exit(0)
 }
@@ -127,15 +173,14 @@ func compare(dir1 string, dir2 string) {
 	// Trigger recursive trasversal that feeds fileChannel
 	err := traverse(dir1, dir2, fileChannel)
 
-	waitDone.Wait() // Wait until all comparisons are done
+	close(fileChannel) // Close the channel
+	waitDone.Wait()    // Wait until all comparisons are done
 
 	if len(fileChannel) != 0 {
-		fmt.Print("WEIRD)\n")
+		fmt.Print("WEIRD\n")
 	} else {
-		fmt.Print("FIM OK)\n")
+		fmt.Print("FIM OK\n")
 	}
-
-	close(fileChannel) // Close the channel
 
 	if err != nil {
 		fmt.Printf("Error during traversal: %v\n", err)
@@ -149,12 +194,14 @@ func traverse(dir1 string, dir2 string, fileChannel chan<- files2Compare) error 
 	// Calculate the children of dir1
 	dirEntry1, err1 := os.ReadDir(dir1)
 	if err1 != nil {
+		addElementInError(dir1 + ": " + err1.Error())
 		return err1
 	}
 
 	// Calculate the children of dir2
 	dirEntry2, err2 := os.ReadDir(dir2)
 	if err2 != nil {
+		addElementInError(dir2 + ": " + err2.Error())
 		return err2
 	}
 
