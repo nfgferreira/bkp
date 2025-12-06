@@ -185,6 +185,20 @@ func compareFiles(fileChannel <-chan files2Compare) {
 	for {
 		cmp = <-fileChannel
 		fmt.Printf("Comparing %v and %v\n", cmp.path1, cmp.path2)
+		var file1Info, err1 = os.Stat(cmp.path1)
+		var file2Info, err2 = os.Stat(cmp.path2)
+		if err1 != nil {
+			fmt.Printf("%v failed!!!", cmp.path1)
+		}
+		if err2 != nil {
+			fmt.Printf("%v failed!!!", cmp.path2)
+		}
+
+		if file1Info.Size() != file2Info.Size() || file1Info.ModTime() != file2Info.ModTime() {
+			fmt.Printf("Files %v and %v differ.\n", cmp.path1, cmp.path2)
+		} else {
+			fmt.Printf("Files %v and %v are identical.\n", cmp.path1, cmp.path2)
+		}
 		waitDone.Done()
 	}
 }
