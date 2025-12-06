@@ -43,16 +43,23 @@ func (d1 *dirMembers) sub(d2 *dirMembers) *dirMembers {
 }
 
 var fastCompare *bool
+var listErrors *bool
+var listIn1Only *bool
+var listIn2Only *bool
+var listDifferent *bool
+var listEqual *bool
 var timeTolerance *int
 
 func main() {
 	fastCompare = flag.Bool("f", false, "Use fast comparison, where time/date and size are enough to consider two files equal")
+	listErrors = flag.Bool("e", false, "List file errors found.")
+	listIn1Only = flag.Bool("1", false, "List files only in path 1.")
+	listIn2Only = flag.Bool("2", false, "List files only in path 2.")
+	listDifferent = flag.Bool("d", false, "List files which are different.")
+	listEqual = flag.Bool("s", false, "List files which are the same.")
 	timeTolerance = flag.Int("t", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
 	flag.Parse()
-	fmt.Printf("Fast = %t\n", *fastCompare)
-	fmt.Printf("Time tolerance = %d\n", *timeTolerance)
 	parameters := flag.Args()
-	fmt.Println(parameters)
 	if len(parameters) != 2 {
 		fmt.Println("Exactly two parameters were expected.")
 		os.Exit(1)
@@ -61,47 +68,67 @@ func main() {
 	compare(parameters[0], parameters[1])
 
 	// Now we sort the results and print them
-	if len(elementsIn1Only) != 0 {
-		sort.Strings(elementsIn1Only)
-		fmt.Println("Elements in path 1 only:")
-		for _, path := range elementsIn1Only {
-			fmt.Println(path)
+	if *listIn1Only {
+		if len(elementsIn1Only) != 0 {
+			sort.Strings(elementsIn1Only)
+			fmt.Println("Elements in path 1 only:")
+			for _, path := range elementsIn1Only {
+				fmt.Println(path)
+			}
+		} else {
+			fmt.Println("No elements found only in path 1.")
 		}
 	}
 
-	if len(elementsIn2Only) != 0 {
-		sort.Strings(elementsIn2Only)
-		fmt.Println("Elements in path 2 only:")
-		for _, path := range elementsIn2Only {
-			fmt.Println(path)
+	if *listIn2Only {
+		if len(elementsIn2Only) != 0 {
+			sort.Strings(elementsIn2Only)
+			fmt.Println("Elements in path 2 only:")
+			for _, path := range elementsIn2Only {
+				fmt.Println(path)
+			}
+		} else {
+			fmt.Println("No elements found only in path 2.")
 		}
 	}
 
-	if len(elementsInError) != 0 {
-		sort.Strings(elementsInError)
-		fmt.Println("Elements that couldn't be opened and the errors returned:")
-		for _, path := range elementsInError {
-			fmt.Println(path)
+	if *listErrors {
+		if len(elementsInError) != 0 {
+			sort.Strings(elementsInError)
+			fmt.Println("Elements that couldn't be opened and the errors returned:")
+			for _, path := range elementsInError {
+				fmt.Println(path)
+			}
+		} else {
+			fmt.Println("No errors found.")
 		}
 	}
 
-	if len(elementsWhichAreDifferent) != 0 {
-		sort.Slice(elementsWhichAreDifferent, func(i, j int) bool {
-			return elementsWhichAreDifferent[i].path1 < elementsWhichAreDifferent[j].path1
-		})
-		fmt.Println("Pairs which are different between path 1 and path 2:")
-		for _, paths := range elementsWhichAreDifferent {
-			fmt.Println(paths.path1 + ", " + paths.path2)
+	if *listDifferent {
+		if len(elementsWhichAreDifferent) != 0 {
+			sort.Slice(elementsWhichAreDifferent, func(i, j int) bool {
+				return elementsWhichAreDifferent[i].path1 < elementsWhichAreDifferent[j].path1
+			})
+			fmt.Println("Pairs which are different between path 1 and path 2:")
+			for _, paths := range elementsWhichAreDifferent {
+				fmt.Println(paths.path1 + ", " + paths.path2)
+			}
+		} else {
+			fmt.Println("No different files found.")
 		}
 	}
 
-	if len(elementsWhichAreEqual) != 0 {
-		sort.Slice(elementsWhichAreEqual, func(i, j int) bool {
-			return elementsWhichAreEqual[i].path1 < elementsWhichAreEqual[j].path1
-		})
-		fmt.Println("Pairs which are the same between path 1 and path 2:")
-		for _, paths := range elementsWhichAreEqual {
-			fmt.Println(paths.path1 + ", " + paths.path2)
+	if *listEqual {
+		if len(elementsWhichAreEqual) != 0 {
+			sort.Slice(elementsWhichAreEqual, func(i, j int) bool {
+				return elementsWhichAreEqual[i].path1 < elementsWhichAreEqual[j].path1
+			})
+			fmt.Println("Pairs which are the same between path 1 and path 2:")
+			for _, paths := range elementsWhichAreEqual {
+				fmt.Println(paths.path1 + ", " + paths.path2)
+			}
+		} else {
+			fmt.Println("No equal files found.")
 		}
 	}
 
@@ -181,16 +208,12 @@ func compare(dir1 string, dir2 string) {
 	close(fileChannel) // Close the channel
 	waitDone.Wait()    // Wait until all comparisons are done
 
-	if len(fileChannel) != 0 {
-		fmt.Print("WEIRD\n")
-	} else {
-		fmt.Print("FIM OK\n")
-	}
-
 	if err != nil {
 		fmt.Printf("Error during traversal: %v\n", err)
+	} else if len(fileChannel) != 0 {
+		fmt.Println("For some reason not all comparisons finished.")
 	} else {
-		fmt.Println("Traversal completed.")
+		fmt.Println("Traversal completed succesfully.")
 	}
 }
 
@@ -305,7 +328,7 @@ func compareFiles(fileChannel <-chan files2Compare) {
 				continue
 			}
 
-			const bufferSize = 4096
+			const bufferSize = 16 * 4096
 			buf1 := make([]byte, bufferSize)
 			buf2 := make([]byte, bufferSize)
 
