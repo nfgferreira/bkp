@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"sort"
@@ -40,11 +42,14 @@ func (d1 *dirMembers) sub(d2 *dirMembers) *dirMembers {
 	return &result
 }
 
+var fastCompare *bool
+var timeTolerance *int
+
 func main() {
-	var fast = flag.Bool("f", false, "Use fast comparison")
-	var timeTolerance = flag.Int("t", 0, "Time tolerance when comparing file time and date (default 0)")
+	fastCompare = flag.Bool("f", false, "Use fast comparison, where time/date and size are enough to consider two files equal")
+	timeTolerance = flag.Int("t", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
 	flag.Parse()
-	fmt.Printf("Fast = %t\n", *fast)
+	fmt.Printf("Fast = %t\n", *fastCompare)
 	fmt.Printf("Time tolerance = %d\n", *timeTolerance)
 	parameters := flag.Args()
 	fmt.Println(parameters)
@@ -277,113 +282,62 @@ func compareFiles(fileChannel <-chan files2Compare) {
 			if err2 != nil {
 				addElementInError(cmp.path2 + ": " + err2.Error())
 			}
-		} else if file1Info.Size() != file2Info.Size() || file1Info.ModTime() != file2Info.ModTime() {
+		} else if file1Info.Size() != file2Info.Size() {
 			addDifferentPair(cmp.path1, cmp.path2)
+		} else if *fastCompare {
+			if file1Info.ModTime() != file2Info.ModTime() {
+				addDifferentPair(cmp.path1, cmp.path2)
+			} else {
+				addEqualPair(cmp.path1, cmp.path2)
+			}
 		} else {
-			addEqualPair(cmp.path1, cmp.path2)
+			f1, err1 := os.Open(cmp.path1)
+			if err1 != nil {
+				addElementInError(cmp.path1 + ": " + err1.Error())
+				f1.Close()
+				continue
+			}
+
+			f2, err2 := os.Open(cmp.path2)
+			if err2 != nil {
+				addElementInError(cmp.path2 + ": " + err2.Error())
+				f2.Close()
+				continue
+			}
+
+			const bufferSize = 4096
+			buf1 := make([]byte, bufferSize)
+			buf2 := make([]byte, bufferSize)
+
+			for {
+				n1, err1 := f1.Read(buf1)
+				n2, err2 := f2.Read(buf2)
+
+				if err1 != nil && err1 != io.EOF {
+					addElementInError(cmp.path1 + ": " + err1.Error())
+					break
+				}
+				if err2 != nil && err2 != io.EOF {
+					addElementInError(cmp.path2 + ": " + err2.Error())
+					break
+				}
+
+				if n1 != n2 || !bytes.Equal(buf1[:n1], buf2[:n2]) {
+					addDifferentPair(cmp.path1, cmp.path2)
+					break
+				}
+
+				if err1 == io.EOF && err2 == io.EOF {
+					addEqualPair(cmp.path1, cmp.path2)
+					break
+				}
+			}
+			f1.Close()
+			f2.Close()
 		}
 		waitDone.Done()
 	}
 }
-
-//func dirCompare(dir1 string, dir2 string) {
-//	fmt.Printf("Comparing %v and %v\n", dir1, dir2)
-//
-//	// Calculate the children of dir1
-//	dirEntry1, err1 := os.ReadDir(dir1)
-//	if err1 != nil {
-//		fmt.Printf("%v.\n", err1)
-//		return
-//	}
-//
-//	// Calculate the children of dir2
-//	dirEntry2, err2 := os.ReadDir(dir2)
-//	if err2 != nil {
-//		fmt.Printf("%v.\n", err2)
-//		return
-//	}
-//
-//	// Create set of d1 members
-//	d1 := make(dirMembers)
-//	for _, entry := range dirEntry1 {
-//		name := entry.Name()
-//		if entry.IsDir() {
-//			name += "/"
-//		}
-//		d1[name] = struct{}{}
-//	}
-//
-//	// Create set of d2 members
-//	d2 := make(dirMembers)
-//	for _, entry := range dirEntry2 {
-//		name := entry.Name()
-//		if entry.IsDir() {
-//			name += "/"
-//		}
-//		d2[name] = struct{}{}
-//	}
-//
-//	// Create sets with common files and files only in one of the directories
-//	commonFiles := d1.intersection(&d2)
-//	filesInD1Only := d1.sub(&d2)
-//	filesInD2Only := d2.sub(&d1)
-//
-//	// Print the files only in d1:
-//	if len(*filesInD1Only) != 0 {
-//		fmt.Println("Files only in source", dir1)
-//		for path1 := range *filesInD1Only {
-//			fmt.Println(path1)
-//		}
-//	}
-//
-//	// Print the files only in d2:
-//	if len(*filesInD2Only) != 0 {
-//		fmt.Println("Files only in destination", dir2)
-//		for path2 := range *filesInD2Only {
-//			fmt.Println(path2)
-//		}
-//	}
-//
-//	// Print the common files
-//	if len(*commonFiles) != 0 {
-//		fmt.Println("Common files")
-//		for path := range *commonFiles {
-//			fmt.Println(path)
-//		}
-//	}
-//
-//	// Now compare the files
-//	compareFilesIn(commonFiles)
-//
-//	fmt.Println(MaxParallelism())
-//
-//}
-
-// We want to compare files here and be fast.
-// The processing will be shared amongst the maximum number of cores.
-//func compareFilesIn(commonFiles *dirMembers) {
-//	nCores := MaxParallelism() // Number of available cores.
-//
-//	// We do not count the core which is running this process
-//	if nCores > 1 {
-//		nCores--
-//	}
-//
-//	// Now we enumerate the files to be allocated to each core.
-//	// Reading maps in Go is non-determinitic, so we create a slice to list all the
-//	// elements to be compared.
-//	fileList := make([]string, 0, len(*commonFiles))
-//	for path := range *commonFiles {
-//		fileList = append(fileList, path)
-//	}
-//
-//	// Now we calculate the numer of files to each core. We try to balance the load as much as we can.
-//	nFiles := len(fileList)
-//	filesPerCore := nFiles / nCores
-//	extraFiles := nFiles % nCores
-//
-//	fmt.Printf("Number of cores: %d, files per core: %d, extra files: %d\n", nCores, filesPerCore, extraFiles)
-//}
 
 // from https://stackoverflow.com/questions/13234749/golang-how-to-verify-number-of-processors-on-which-a-go-program-is-running
 func MaxParallelism() int {
