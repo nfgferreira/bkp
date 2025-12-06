@@ -60,10 +60,16 @@ func main() {
 // Slices tahat will keep elements existing only in one of the paths
 var elementsIn1Only []string
 var elementsIn2Only []string
+var elementsWhichAreEqual []files2Compare
+var elementsWhichAreDifferent []files2Compare
+var elementsInError []string
 
 // Correspondings semaphores
 var sema1 = make(chan struct{}, 1)
 var sema2 = make(chan struct{}, 1)
+var semaEqual = make(chan struct{}, 1)
+var semaDifferent = make(chan struct{}, 1)
+var semaError = make(chan struct{}, 1)
 
 func addElementIn1Only(path string) {
 	sema1 <- struct{}{}
@@ -75,6 +81,26 @@ func addElementIn2Only(path string) {
 	sema2 <- struct{}{}
 	defer func() { <-sema2 }()
 	elementsIn2Only = append(elementsIn2Only, path)
+}
+
+func addEqualPair(path1 string, path2 string) {
+	semaEqual <- struct{}{}
+	defer func() { <-semaEqual }()
+	files2Compare := files2Compare{path1: path1, path2: path2}
+	elementsWhichAreEqual = append(elementsWhichAreEqual, files2Compare)
+}
+
+func addDifferentPair(path1 string, path2 string) {
+	semaDifferent <- struct{}{}
+	defer func() { <-semaDifferent }()
+	files2Compare := files2Compare{path1: path1, path2: path2}
+	elementsWhichAreDifferent = append(elementsWhichAreDifferent, files2Compare)
+}
+
+func addElementInError(path string) {
+	semaError <- struct{}{}
+	defer func() { <-semaError }()
+	elementsInError = append(elementsInError, path)
 }
 
 // WaitGroup to synchronize the completion of all comparisons
@@ -101,7 +127,14 @@ func compare(dir1 string, dir2 string) {
 	// Trigger recursive trasversal that feeds fileChannel
 	err := traverse(dir1, dir2, fileChannel)
 
-	waitDone.Wait()    // Wait until all comparisons are done
+	waitDone.Wait() // Wait until all comparisons are done
+
+	if len(fileChannel) != 0 {
+		fmt.Print("WEIRD)\n")
+	} else {
+		fmt.Print("FIM OK)\n")
+	}
+
 	close(fileChannel) // Close the channel
 
 	if err != nil {
@@ -184,20 +217,20 @@ func compareFiles(fileChannel <-chan files2Compare) {
 	var cmp files2Compare
 	for {
 		cmp = <-fileChannel
-		fmt.Printf("Comparing %v and %v\n", cmp.path1, cmp.path2)
 		var file1Info, err1 = os.Stat(cmp.path1)
 		var file2Info, err2 = os.Stat(cmp.path2)
-		if err1 != nil {
-			fmt.Printf("%v failed!!!", cmp.path1)
-		}
-		if err2 != nil {
-			fmt.Printf("%v failed!!!", cmp.path2)
-		}
 
-		if file1Info.Size() != file2Info.Size() || file1Info.ModTime() != file2Info.ModTime() {
-			fmt.Printf("Files %v and %v differ.\n", cmp.path1, cmp.path2)
+		if err1 != nil || err2 != nil {
+			if err1 != nil {
+				addElementInError(cmp.path1 + ": " + err1.Error())
+			}
+			if err2 != nil {
+				addElementInError(cmp.path2 + ": " + err2.Error())
+			}
+		} else if file1Info.Size() != file2Info.Size() || file1Info.ModTime() != file2Info.ModTime() {
+			addDifferentPair(cmp.path1, cmp.path2)
 		} else {
-			fmt.Printf("Files %v and %v are identical.\n", cmp.path1, cmp.path2)
+			addEqualPair(cmp.path1, cmp.path2)
 		}
 		waitDone.Done()
 	}
