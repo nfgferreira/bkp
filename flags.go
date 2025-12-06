@@ -261,9 +261,12 @@ func traverse(dir1 string, dir2 string, fileChannel chan<- files2Compare) error 
 }
 
 func compareFiles(fileChannel <-chan files2Compare) {
-	var cmp files2Compare
 	for {
-		cmp = <-fileChannel
+		cmp, ok := <-fileChannel
+		if !ok {
+			return // Channel is closed and empty: do nothing
+		}
+
 		var file1Info, err1 = os.Stat(cmp.path1)
 		var file2Info, err2 = os.Stat(cmp.path2)
 
