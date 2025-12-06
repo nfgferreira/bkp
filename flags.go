@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sync"
 )
 
 type dirMembers map[string]bool
@@ -39,11 +40,9 @@ func (d1 *dirMembers) sub(d2 *dirMembers) *dirMembers {
 }
 
 func main() {
-	var simulate = flag.Bool("s", true, "Simulate backup")
-	var fast = flag.Bool("f", true, "Use fast comparison")
+	var fast = flag.Bool("f", false, "Use fast comparison")
 	var timeTolerance = flag.Int("t", 0, "Time tolerance when comparing file time and date (default 0)")
 	flag.Parse()
-	fmt.Printf("Simulate = %t\n", *simulate)
 	fmt.Printf("Fast = %t\n", *fast)
 	fmt.Printf("Time tolerance = %d\n", *timeTolerance)
 	parameters := flag.Args()
@@ -78,6 +77,9 @@ func addElementIn2Only(path string) {
 	elementsIn2Only = append(elementsIn2Only, path)
 }
 
+// WaitGroup to synchronize the completion of all comparisons
+var waitDone sync.WaitGroup
+
 type files2Compare struct {
 	path1 string
 	path2 string
@@ -92,12 +94,15 @@ func compare(dir1 string, dir2 string) {
 	fileChannel := make(chan files2Compare, paralelism*10)
 
 	// Trigger instances to read fileChannel and compare the files
-	for i := 0; i < paralelism; i++ {
+	for range paralelism {
 		go compareFiles(fileChannel)
 	}
 
 	// Trigger recursive trasversal that feeds fileChannel
 	err := traverse(dir1, dir2, fileChannel)
+
+	waitDone.Wait()    // Wait until all comparisons are done
+	close(fileChannel) // Close the channel
 
 	if err != nil {
 		fmt.Printf("Error during traversal: %v\n", err)
@@ -166,6 +171,7 @@ func traverse(dir1 string, dir2 string, fileChannel chan<- files2Compare) error 
 				var cmp files2Compare
 				cmp.path1 = dir1 + "/" + path
 				cmp.path2 = dir2 + "/" + path
+				waitDone.Add(1)
 				fileChannel <- cmp
 			}
 		}
@@ -179,6 +185,7 @@ func compareFiles(fileChannel <-chan files2Compare) {
 	for {
 		cmp = <-fileChannel
 		fmt.Printf("Comparing %v and %v\n", cmp.path1, cmp.path2)
+		waitDone.Done()
 	}
 }
 
