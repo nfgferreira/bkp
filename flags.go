@@ -49,6 +49,8 @@ var listDifferent *bool
 var listEqual *bool
 var writeConfiguration *uint
 var timeTolerance *int
+var copyIn1Only bool = false
+var copyDifferent bool = false
 
 func main() {
 	fastCompare = flag.Bool("f", false, "Use fast comparison, where time/date and size are enough to consider two files equal")
@@ -63,6 +65,8 @@ func main() {
 		fmt.Println("Invalid value for -w parameter. Valid values are 0, 1, 2 and 3.")
 		os.Exit(1)
 	}
+	copyIn1Only = *writeConfiguration == 2 || *writeConfiguration == 3
+	copyDifferent = *writeConfiguration == 1 || *writeConfiguration == 3
 	parameters := flag.Args()
 	if len(parameters) != 2 {
 		fmt.Println("Exactly two parameters were expected.")
@@ -114,14 +118,14 @@ func main() {
 	}
 
 	fmt.Println("")
-	if (*writeConfiguration == 1 || *writeConfiguration == 3) && numberOfDiffFileCopies == 0 {
+	if copyDifferent && numberOfDiffFileCopies == 0 {
 		fmt.Println("No different files found.")
 	} else if *listDifferent || numberOfDiffFileCopies > 0 {
 		if len(elementsWhichAreDifferent) != 0 {
 			sort.Slice(elementsWhichAreDifferent, func(i, j int) bool {
 				return elementsWhichAreDifferent[i].path1 < elementsWhichAreDifferent[j].path1
 			})
-			if *writeConfiguration == 1 || *writeConfiguration == 3 {
+			if copyDifferent {
 				fmt.Println("--> Pairs which were copied from source to destination:")
 				for _, paths := range elementsWhichAreDifferent {
 					fmt.Println(paths.path1 + " --> " + paths.path2)
@@ -393,7 +397,7 @@ func compareFiles(fileChannel <-chan filePair) {
 }
 
 func copyDifferentFiles(path1, path2 string) {
-	if *writeConfiguration == 1 || *writeConfiguration == 3 {
+	if copyDifferent {
 		semaCopyDiffFiles <- struct{}{}
 		numberOfDiffFileCopies++
 		<-semaCopyDiffFiles
@@ -449,7 +453,7 @@ func copyFile(path1, path2 string) error {
 }
 
 func copyFilesIn1Only() {
-	if *writeConfiguration == 1 || *writeConfiguration == 3 {
+	if copyIn1Only {
 		for _, pair := range elementsIn1Only {
 			fullPath1 := pair.path1
 			fullPath2 := pair.path2
