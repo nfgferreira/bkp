@@ -48,6 +48,7 @@ var listIn1Only *bool
 var listIn2Only *bool
 var listDifferent *bool
 var listEqual *bool
+var writeConfiguration *uint
 var timeTolerance *int
 
 func main() {
@@ -58,7 +59,12 @@ func main() {
 	listDifferent = flag.Bool("d", false, "List files which are different.")
 	listEqual = flag.Bool("s", false, "List files which are the same.")
 	timeTolerance = flag.Int("t", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
+	writeConfiguration = flag.Uint("w", 0, "Write: 0(disabled), 1(!= -> 2), 2(1->2), 3(1, != -> 2) (default 0)")
 	flag.Parse()
+	if *writeConfiguration > 3 {
+		fmt.Println("Invalid value for -w parameter. Valid values are 0, 1, 2 and 3.")
+		os.Exit(1)
+	}
 	parameters := flag.Args()
 	if len(parameters) != 2 {
 		fmt.Println("Exactly two parameters were expected.")
@@ -71,7 +77,7 @@ func main() {
 	if *listIn1Only {
 		if len(elementsIn1Only) != 0 {
 			sort.Strings(elementsIn1Only)
-			fmt.Println("Elements in path 1 only:")
+			fmt.Println("--> Elements in path 1 only:")
 			for _, path := range elementsIn1Only {
 				fmt.Println(path)
 			}
@@ -83,7 +89,7 @@ func main() {
 	if *listIn2Only {
 		if len(elementsIn2Only) != 0 {
 			sort.Strings(elementsIn2Only)
-			fmt.Println("Elements in path 2 only:")
+			fmt.Println("--> Elements in path 2 only:")
 			for _, path := range elementsIn2Only {
 				fmt.Println(path)
 			}
@@ -95,7 +101,7 @@ func main() {
 	if *listErrors {
 		if len(elementsInError) != 0 {
 			sort.Strings(elementsInError)
-			fmt.Println("Elements that couldn't be opened and the errors returned:")
+			fmt.Println("--> Elements that couldn't be opened and the errors returned:")
 			for _, path := range elementsInError {
 				fmt.Println(path)
 			}
@@ -104,17 +110,22 @@ func main() {
 		}
 	}
 
-	if *listDifferent {
+	if (*writeConfiguration == 1 || *writeConfiguration == 3) && numberOfDiffFileCopies == 0 {
+		fmt.Println("No different files found.")
+	} else if *listDifferent || numberOfDiffFileCopies > 0 {
 		if len(elementsWhichAreDifferent) != 0 {
 			sort.Slice(elementsWhichAreDifferent, func(i, j int) bool {
 				return elementsWhichAreDifferent[i].path1 < elementsWhichAreDifferent[j].path1
 			})
-			fmt.Println("Pairs which are different between path 1 and path 2:")
+			fmt.Println("--> Pairs which are different between path 1 and path 2:")
 			for _, paths := range elementsWhichAreDifferent {
 				fmt.Println(paths.path1 + ", " + paths.path2)
 			}
 		} else {
 			fmt.Println("No different files found.")
+		}
+		if numberOfDiffFileCopies > 0 {
+			fmt.Printf("Number of different files copied: %d\n", numberOfDiffFileCopies)
 		}
 	}
 
@@ -123,7 +134,7 @@ func main() {
 			sort.Slice(elementsWhichAreEqual, func(i, j int) bool {
 				return elementsWhichAreEqual[i].path1 < elementsWhichAreEqual[j].path1
 			})
-			fmt.Println("Pairs which are the same between path 1 and path 2:")
+			fmt.Println("--> Pairs which are the same between path 1 and path 2:")
 			for _, paths := range elementsWhichAreEqual {
 				fmt.Println(paths.path1 + ", " + paths.path2)
 			}
@@ -138,6 +149,7 @@ func main() {
 // Slices tahat will keep elements existing only in one of the paths
 var elementsIn1Only []string
 var elementsIn2Only []string
+var numberOfDiffFileCopies int
 var elementsWhichAreEqual []files2Compare
 var elementsWhichAreDifferent []files2Compare
 var elementsInError []string
@@ -145,6 +157,7 @@ var elementsInError []string
 // Correspondings semaphores
 var sema1 = make(chan struct{}, 1)
 var sema2 = make(chan struct{}, 1)
+var semaCopyDiffFiles = make(chan struct{}, 1)
 var semaEqual = make(chan struct{}, 1)
 var semaDifferent = make(chan struct{}, 1)
 var semaError = make(chan struct{}, 1)
@@ -306,9 +319,11 @@ func compareFiles(fileChannel <-chan files2Compare) {
 				addElementInError(cmp.path2 + ": " + err2.Error())
 			}
 		} else if file1Info.Size() != file2Info.Size() {
+			copyDifferentFiles(cmp.path1, cmp.path2)
 			addDifferentPair(cmp.path1, cmp.path2)
 		} else if *fastCompare {
 			if file1Info.ModTime() != file2Info.ModTime() {
+				copyDifferentFiles(cmp.path1, cmp.path2)
 				addDifferentPair(cmp.path1, cmp.path2)
 			} else {
 				addEqualPair(cmp.path1, cmp.path2)
@@ -346,6 +361,7 @@ func compareFiles(fileChannel <-chan files2Compare) {
 				}
 
 				if n1 != n2 || !bytes.Equal(buf1[:n1], buf2[:n2]) {
+					copyDifferentFiles(cmp.path1, cmp.path2)
 					addDifferentPair(cmp.path1, cmp.path2)
 					break
 				}
@@ -360,6 +376,62 @@ func compareFiles(fileChannel <-chan files2Compare) {
 		}
 		waitDone.Done()
 	}
+}
+
+func copyDifferentFiles(path1, path2 string) {
+	if *writeConfiguration == 1 || *writeConfiguration == 3 {
+		semaCopyDiffFiles <- struct{}{}
+		numberOfDiffFileCopies++
+		<-semaCopyDiffFiles
+		ok := copyFile(path1, path2)
+		if ok != nil {
+			addElementInError(path1 + "->" + path2 + ": " + ok.Error())
+		}
+	}
+}
+
+func copyFile(path1, path2 string) error {
+	input, err := os.Open(path1)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+
+	path1Info, err := input.Stat()
+	if err != nil {
+		return err
+	}
+
+	output, err := os.Create(path2)
+	if err != nil {
+		return err
+	}
+	defer output.Close()
+
+	_, err = io.Copy(output, input)
+	if err != nil {
+		return err
+	}
+
+	err = output.Sync()
+	if err != nil {
+		return err
+	}
+
+	err = os.Chmod(path2, path1Info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+
+	modTime := path1Info.ModTime()
+	accessTime := modTime // A common practice is to use the modification time for the access time if the original access time isn't readily available.
+
+	err = os.Chtimes(path2, accessTime, modTime)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // from https://stackoverflow.com/questions/13234749/golang-how-to-verify-number-of-processors-on-which-a-go-program-is-running
