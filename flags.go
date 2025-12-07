@@ -121,9 +121,16 @@ func main() {
 			sort.Slice(elementsWhichAreDifferent, func(i, j int) bool {
 				return elementsWhichAreDifferent[i].path1 < elementsWhichAreDifferent[j].path1
 			})
-			fmt.Println("--> Pairs which are different between path 1 and path 2:")
-			for _, paths := range elementsWhichAreDifferent {
-				fmt.Println(paths.path1 + ", " + paths.path2)
+			if *writeConfiguration == 1 || *writeConfiguration == 3 {
+				fmt.Println("--> Pairs which were copied from source to destination:")
+				for _, paths := range elementsWhichAreDifferent {
+					fmt.Println(paths.path1 + " --> " + paths.path2)
+				}
+			} else {
+				fmt.Println("--> Pairs which are different between path 1 and path 2:")
+				for _, paths := range elementsWhichAreDifferent {
+					fmt.Println(paths.path1 + ", " + paths.path2)
+				}
 			}
 		} else {
 			fmt.Println("No different files found.")
@@ -152,11 +159,11 @@ func main() {
 }
 
 // Slices tahat will keep elements existing only in one of the paths
-var elementsIn1Only []files2Compare
-var elementsIn2Only []files2Compare
+var elementsIn1Only []filePair
+var elementsIn2Only []filePair
 var numberOfDiffFileCopies int
-var elementsWhichAreEqual []files2Compare
-var elementsWhichAreDifferent []files2Compare
+var elementsWhichAreEqual []filePair
+var elementsWhichAreDifferent []filePair
 var elementsInError []string
 
 // Correspondings semaphores
@@ -170,28 +177,28 @@ var semaError = make(chan struct{}, 1)
 func addElementIn1Only(path1 string, path2 string) {
 	sema1 <- struct{}{}
 	defer func() { <-sema1 }()
-	in1Only := files2Compare{path1: path1, path2: path2}
+	in1Only := filePair{path1: path1, path2: path2}
 	elementsIn1Only = append(elementsIn1Only, in1Only)
 }
 
 func addElementIn2Only(path1 string, path2 string) {
 	sema2 <- struct{}{}
 	defer func() { <-sema2 }()
-	in2Only := files2Compare{path1: path1, path2: path2}
+	in2Only := filePair{path1: path1, path2: path2}
 	elementsIn2Only = append(elementsIn2Only, in2Only)
 }
 
 func addEqualPair(path1 string, path2 string) {
 	semaEqual <- struct{}{}
 	defer func() { <-semaEqual }()
-	files2Compare := files2Compare{path1: path1, path2: path2}
+	files2Compare := filePair{path1: path1, path2: path2}
 	elementsWhichAreEqual = append(elementsWhichAreEqual, files2Compare)
 }
 
 func addDifferentPair(path1 string, path2 string) {
 	semaDifferent <- struct{}{}
 	defer func() { <-semaDifferent }()
-	files2Compare := files2Compare{path1: path1, path2: path2}
+	files2Compare := filePair{path1: path1, path2: path2}
 	elementsWhichAreDifferent = append(elementsWhichAreDifferent, files2Compare)
 }
 
@@ -204,7 +211,7 @@ func addElementInError(path string) {
 // WaitGroup to synchronize the completion of all comparisons
 var waitDone sync.WaitGroup
 
-type files2Compare struct {
+type filePair struct {
 	path1 string
 	path2 string
 }
@@ -215,7 +222,7 @@ func compare(dir1 string, dir2 string) {
 	paralelism := MaxParallelism()
 
 	// Create channel where all the files go
-	fileChannel := make(chan files2Compare, paralelism*10)
+	fileChannel := make(chan filePair, paralelism*10)
 
 	// Trigger instances to read fileChannel and compare the files
 	for range paralelism {
@@ -238,7 +245,7 @@ func compare(dir1 string, dir2 string) {
 }
 
 // Traverse the directory trees and add files to fileChannel as they are found.
-func traverse(dir1 string, dir2 string, fileChannel chan<- files2Compare) error {
+func traverse(dir1 string, dir2 string, fileChannel chan<- filePair) error {
 	// Calculate the children of dir1
 	dirEntry1, err1 := os.ReadDir(dir1)
 	if err1 != nil {
@@ -296,7 +303,7 @@ func traverse(dir1 string, dir2 string, fileChannel chan<- files2Compare) error 
 			if (*commonFiles)[path] {
 				traverse(dir1+"/"+path, dir2+"/"+path, fileChannel)
 			} else {
-				var cmp files2Compare
+				var cmp filePair
 				cmp.path1 = dir1 + "/" + path
 				cmp.path2 = dir2 + "/" + path
 				waitDone.Add(1)
@@ -308,7 +315,7 @@ func traverse(dir1 string, dir2 string, fileChannel chan<- files2Compare) error 
 	return nil
 }
 
-func compareFiles(fileChannel <-chan files2Compare) {
+func compareFiles(fileChannel <-chan filePair) {
 	for {
 		cmp, ok := <-fileChannel
 		if !ok {
