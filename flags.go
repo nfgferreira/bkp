@@ -43,7 +43,6 @@ func (d1 *dirMembers) sub(d2 *dirMembers) *dirMembers {
 }
 
 var fastCompare *bool
-var listErrors *bool
 var listIn1Only *bool
 var listIn2Only *bool
 var listDifferent *bool
@@ -53,7 +52,6 @@ var timeTolerance *int
 
 func main() {
 	fastCompare = flag.Bool("f", false, "Use fast comparison, where time/date and size are enough to consider two files equal")
-	listErrors = flag.Bool("e", false, "List file errors found.")
 	listIn1Only = flag.Bool("1", false, "List files only in path 1.")
 	listIn2Only = flag.Bool("2", false, "List files only in path 2.")
 	listDifferent = flag.Bool("d", false, "List files which are different.")
@@ -73,13 +71,18 @@ func main() {
 
 	compare(parameters[0], parameters[1])
 
+	copyFilesIn1Only()
+
 	// Now we sort the results and print them
 	if *listIn1Only {
 		if len(elementsIn1Only) != 0 {
-			sort.Strings(elementsIn1Only)
+			sort.Slice(elementsIn1Only, func(i, j int) bool {
+				return elementsIn1Only[i].path1 < elementsIn1Only[j].path1
+			})
+			fmt.Println("")
 			fmt.Println("--> Elements in path 1 only:")
-			for _, path := range elementsIn1Only {
-				fmt.Println(path)
+			for _, pair := range elementsIn1Only {
+				fmt.Println(pair.path1)
 			}
 		} else {
 			fmt.Println("No elements found only in path 1.")
@@ -88,28 +91,29 @@ func main() {
 
 	if *listIn2Only {
 		if len(elementsIn2Only) != 0 {
-			sort.Strings(elementsIn2Only)
+			sort.Slice(elementsIn2Only, func(i, j int) bool {
+				return elementsIn2Only[i].path2 < elementsIn2Only[j].path2
+			})
+			fmt.Println("")
 			fmt.Println("--> Elements in path 2 only:")
-			for _, path := range elementsIn2Only {
-				fmt.Println(path)
+			for _, pair := range elementsIn2Only {
+				fmt.Println(pair.path2)
 			}
 		} else {
 			fmt.Println("No elements found only in path 2.")
 		}
 	}
 
-	if *listErrors {
-		if len(elementsInError) != 0 {
-			sort.Strings(elementsInError)
-			fmt.Println("--> Elements that couldn't be opened and the errors returned:")
-			for _, path := range elementsInError {
-				fmt.Println(path)
-			}
-		} else {
-			fmt.Println("No errors found.")
+	if len(elementsInError) != 0 {
+		sort.Strings(elementsInError)
+		fmt.Println("")
+		fmt.Println("--> Errors found:")
+		for _, path := range elementsInError {
+			fmt.Println(path)
 		}
 	}
 
+	fmt.Println("")
 	if (*writeConfiguration == 1 || *writeConfiguration == 3) && numberOfDiffFileCopies == 0 {
 		fmt.Println("No different files found.")
 	} else if *listDifferent || numberOfDiffFileCopies > 0 {
@@ -129,6 +133,7 @@ func main() {
 		}
 	}
 
+	fmt.Println("")
 	if *listEqual {
 		if len(elementsWhichAreEqual) != 0 {
 			sort.Slice(elementsWhichAreEqual, func(i, j int) bool {
@@ -147,8 +152,8 @@ func main() {
 }
 
 // Slices tahat will keep elements existing only in one of the paths
-var elementsIn1Only []string
-var elementsIn2Only []string
+var elementsIn1Only []files2Compare
+var elementsIn2Only []files2Compare
 var numberOfDiffFileCopies int
 var elementsWhichAreEqual []files2Compare
 var elementsWhichAreDifferent []files2Compare
@@ -162,16 +167,18 @@ var semaEqual = make(chan struct{}, 1)
 var semaDifferent = make(chan struct{}, 1)
 var semaError = make(chan struct{}, 1)
 
-func addElementIn1Only(path string) {
+func addElementIn1Only(path1 string, path2 string) {
 	sema1 <- struct{}{}
 	defer func() { <-sema1 }()
-	elementsIn1Only = append(elementsIn1Only, path)
+	in1Only := files2Compare{path1: path1, path2: path2}
+	elementsIn1Only = append(elementsIn1Only, in1Only)
 }
 
-func addElementIn2Only(path string) {
+func addElementIn2Only(path1 string, path2 string) {
 	sema2 <- struct{}{}
 	defer func() { <-sema2 }()
-	elementsIn2Only = append(elementsIn2Only, path)
+	in2Only := files2Compare{path1: path1, path2: path2}
+	elementsIn2Only = append(elementsIn2Only, in2Only)
 }
 
 func addEqualPair(path1 string, path2 string) {
@@ -269,7 +276,7 @@ func traverse(dir1 string, dir2 string, fileChannel chan<- files2Compare) error 
 			if (*filesInD1Only)[path1] {
 				path1 += "/"
 			}
-			addElementIn1Only(dir1 + "/" + path1)
+			addElementIn1Only(dir1+"/"+path1, dir2+"/"+path1)
 		}
 	}
 
@@ -279,7 +286,7 @@ func traverse(dir1 string, dir2 string, fileChannel chan<- files2Compare) error 
 			if (*filesInD2Only)[path2] {
 				path2 += "/"
 			}
-			addElementIn2Only(dir2 + "/" + path2)
+			addElementIn2Only(dir1+"/"+path2, dir2+"/"+path2)
 		}
 	}
 
@@ -432,6 +439,19 @@ func copyFile(path1, path2 string) error {
 	}
 
 	return nil
+}
+
+func copyFilesIn1Only() {
+	if *writeConfiguration == 1 || *writeConfiguration == 3 {
+		for _, pair := range elementsIn1Only {
+			fullPath1 := pair.path1
+			fullPath2 := pair.path2
+			ok := copyFile(fullPath1, fullPath2)
+			if ok != nil {
+				addElementInError(fullPath1 + "->" + fullPath2 + ": " + ok.Error())
+			}
+		}
+	}
 }
 
 // from https://stackoverflow.com/questions/13234749/golang-how-to-verify-number-of-processors-on-which-a-go-program-is-running
