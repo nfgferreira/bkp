@@ -11,6 +11,26 @@ import (
 	"sync"
 )
 
+var usage = [...]string{
+	"Usage: bkp [OPTIONS]... path1 path2",
+	"Compare the contents of path1 with path2.",
+	"",
+	"OPTIONS are:",
+	"-h --help      This help message",
+	"-f --fast      Fast compare. Files are considered equal if their modified",
+	"               time and size match (not the default).",
+	"-1             Shows a list of the files in path1 only.",
+	"-2             Shows a list of the files in path2 only.",
+	"-d             Shows a list of different files that are in both paths.",
+	"-e             Shows a list of equal files.",
+	"-t=n --time=n  Time tolerance in secs when comparing files with option",
+	"           	-f (not implemented)",
+	"-w=n       	Option to copy files when differences are found:",
+	"           	 n = 0: Do nothing (the default)",
+	"           	 n = 1: Copy different files from path1 to path2",
+	"           	 n = 2: Copy files that exist only in path1 to path2",
+	"           	 n = 3: Copy a combination of files in cases 1 and 2 to path 2"}
+
 type dirMembers map[string]bool
 
 func (d1 *dirMembers) intersection(d2 *dirMembers) *dirMembers {
@@ -42,25 +62,36 @@ func (d1 *dirMembers) sub(d2 *dirMembers) *dirMembers {
 	return &result
 }
 
-var fastCompare *bool
+var help bool = false
+var fastCompare bool = false
 var listIn1Only *bool
 var listIn2Only *bool
 var listDifferent *bool
 var listEqual *bool
 var writeConfiguration *uint
-var timeTolerance *int
+var timeTolerance int = 0
 var copyIn1Only bool = false
 var copyDifferent bool = false
 
 func main() {
-	fastCompare = flag.Bool("f", false, "Use fast comparison, where time/date and size are enough to consider two files equal")
+	flag.BoolVar(&help, "h", false, "Print help message")
+	flag.BoolVar(&help, "help", false, "Print help message")
+	flag.BoolVar(&fastCompare, "f", false, "Use fast comparison, where time/date and size are enough to consider two files equal")
+	flag.BoolVar(&fastCompare, "fast", false, "Use fast comparison, where time/date and size are enough to consider two files equal")
 	listIn1Only = flag.Bool("1", false, "List files only in path 1.")
 	listIn2Only = flag.Bool("2", false, "List files only in path 2.")
 	listDifferent = flag.Bool("d", false, "List files which are different.")
-	listEqual = flag.Bool("s", false, "List files which are the same.")
-	timeTolerance = flag.Int("t", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
+	listEqual = flag.Bool("e", false, "List files which are the same.")
+	flag.IntVar(&timeTolerance, "t", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
+	flag.IntVar(&timeTolerance, "time", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
 	writeConfiguration = flag.Uint("w", 0, "Write: 0(disabled), 1(!= -> 2), 2(1->2), 3(1, != -> 2) (default 0)")
 	flag.Parse()
+	if help {
+		for line := range usage {
+			fmt.Println(usage[line])
+		}
+		os.Exit(0)
+	}
 	if *writeConfiguration > 3 {
 		fmt.Println("Invalid value for -w parameter. Valid values are 0, 1, 2 and 3.")
 		os.Exit(1)
@@ -339,7 +370,7 @@ func compareFiles(fileChannel <-chan filePair) {
 		} else if file1Info.Size() != file2Info.Size() {
 			copyDifferentFiles(cmp.path1, cmp.path2)
 			addDifferentPair(cmp.path1, cmp.path2)
-		} else if *fastCompare {
+		} else if fastCompare {
 			if file1Info.ModTime() != file2Info.ModTime() {
 				copyDifferentFiles(cmp.path1, cmp.path2)
 				addDifferentPair(cmp.path1, cmp.path2)
