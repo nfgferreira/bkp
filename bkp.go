@@ -29,7 +29,7 @@ var usage = [...]string{
 	"           	 n = 0: Do nothing (the default)",
 	"           	 n = 1: Copy different files from path1 to path2",
 	"           	 n = 2: Copy files that exist only in path1 to path2",
-	"           	 n = 3: Copy a combination of files in cases 1 and 2 to path 2"}
+	"           	 n = 3: Copy files only in path1 and different to path2"}
 
 type dirMembers map[string]bool
 
@@ -73,7 +73,19 @@ var timeTolerance int = 0
 var copyIn1Only bool = false
 var copyDifferent bool = false
 
+func badUsage() {
+	printUsage()
+	os.Exit(1)
+}
+
+func printUsage() {
+	for line := range usage {
+		fmt.Println(usage[line])
+	}
+}
+
 func main() {
+	flag.Usage = badUsage
 	flag.BoolVar(&help, "h", false, "Print help message")
 	flag.BoolVar(&help, "help", false, "Print help message")
 	flag.BoolVar(&fastCompare, "f", false, "Use fast comparison, where time/date and size are enough to consider two files equal")
@@ -87,9 +99,7 @@ func main() {
 	writeConfiguration = flag.Uint("w", 0, "Write: 0(disabled), 1(!= -> 2), 2(1->2), 3(1, != -> 2) (default 0)")
 	flag.Parse()
 	if help {
-		for line := range usage {
-			fmt.Println(usage[line])
-		}
+		printUsage()
 		os.Exit(0)
 	}
 	if *writeConfiguration > 3 {
@@ -101,6 +111,7 @@ func main() {
 	parameters := flag.Args()
 	if len(parameters) != 2 {
 		fmt.Println("Exactly two parameters were expected.")
+		printUsage()
 		os.Exit(1)
 	}
 
