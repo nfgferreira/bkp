@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"time"
 )
 
 var usage = [...]string{
@@ -23,8 +24,7 @@ var usage = [...]string{
 	"-2             Shows a list of the files in path2 only.",
 	"-d             Shows a list of different files that are in both paths.",
 	"-e             Shows a list of equal files.",
-	"-t=n --time=n  Time tolerance in secs when comparing files with option",
-	"           	-f (not implemented)",
+	"-t=n --time=n  Time tolerance in secs when comparing files with option -f",
 	"-w=n       	Option to copy files when differences are found:",
 	"           	 n = 0: Do nothing (the default)",
 	"           	 n = 1: Copy different files from path1 to path2",
@@ -382,7 +382,10 @@ func compareFiles(fileChannel <-chan filePair) {
 			copyDifferentFiles(cmp.path1, cmp.path2)
 			addDifferentPair(cmp.path1, cmp.path2)
 		} else if fastCompare {
-			if file1Info.ModTime() != file2Info.ModTime() {
+			file1Time := file1Info.ModTime()
+			file1MinTime := file1Time.Add(-time.Duration(timeTolerance) * time.Second)
+			file1MaxTime := file1Time.Add(time.Duration(timeTolerance) * time.Second)
+			if file2Info.ModTime().Before(file1MinTime) || file2Info.ModTime().After(file1MaxTime) {
 				copyDifferentFiles(cmp.path1, cmp.path2)
 				addDifferentPair(cmp.path1, cmp.path2)
 			} else {
