@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+const VERSION = "0.0.1"
 
 var usage = [...]string{
 	"Usage: bkp [OPTIONS]... path1 path2",
@@ -18,6 +22,7 @@ var usage = [...]string{
 	"",
 	"OPTIONS are:",
 	"-h --help      This help message",
+	"-v --version   Shows the program version",
 	"-f --fast      Fast compare. Files are considered equal if their modified",
 	"                 time and size match (not the default).",
 	"-1             Shows a list of the files in path1 only.",
@@ -33,6 +38,11 @@ var usage = [...]string{
 	"                 n = 3: Copy files only in path1 and different to path2"}
 
 type dirMembers map[string]bool
+
+// Print version and terminate with code
+func printVersion(executableName string) {
+	fmt.Println(executableName, VERSION)
+}
 
 func (d1 *dirMembers) intersection(d2 *dirMembers) *dirMembers {
 	result := make(dirMembers)
@@ -64,6 +74,7 @@ func (d1 *dirMembers) sub(d2 *dirMembers) *dirMembers {
 }
 
 var help bool = false
+var version bool = false
 var fastCompare bool = false
 var listIn1Only *bool
 var listIn2Only *bool
@@ -86,9 +97,17 @@ func printUsage() {
 }
 
 func main() {
+	// Replace usage message using the command used by the user
+	executableName := filepath.Base(os.Args[0])
+	for i := range usage {
+		usage[i] = strings.ReplaceAll(usage[i], "bkp", executableName)
+	}
+
 	flag.Usage = badUsage
 	flag.BoolVar(&help, "h", false, "Print help message")
 	flag.BoolVar(&help, "help", false, "Print help message")
+	flag.BoolVar(&version, "v", false, "Print version")
+	flag.BoolVar(&version, "version", false, "Print version")
 	flag.BoolVar(&fastCompare, "f", false, "Use fast comparison, where time/date and size are enough to consider two files equal")
 	flag.BoolVar(&fastCompare, "fast", false, "Use fast comparison, where time/date and size are enough to consider two files equal")
 	listIn1Only = flag.Bool("1", false, "List files only in path 1.")
@@ -101,6 +120,10 @@ func main() {
 	flag.Parse()
 	if help {
 		printUsage()
+		os.Exit(0)
+	}
+	if version {
+		printVersion(executableName)
 		os.Exit(0)
 	}
 	if *writeConfiguration > 3 {
@@ -386,7 +409,6 @@ func compareFiles(fileChannel <-chan filePair) {
 			file1Time := file1Info.ModTime()
 			file1MinTime := file1Time.Add(time.Duration(-timeTolerance * float64(time.Second)))
 			file1MaxTime := file1Time.Add(time.Duration(timeTolerance * float64(time.Second)))
-			fmt.Println(file1MaxTime, file1Time, file1MinTime)
 			if file2Info.ModTime().Before(file1MinTime) || file2Info.ModTime().After(file1MaxTime) {
 				copyDifferentFiles(cmp.path1, cmp.path2)
 				addDifferentPair(cmp.path1, cmp.path2)
