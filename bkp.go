@@ -19,17 +19,18 @@ var usage = [...]string{
 	"OPTIONS are:",
 	"-h --help      This help message",
 	"-f --fast      Fast compare. Files are considered equal if their modified",
-	"               time and size match (not the default).",
+	"                 time and size match (not the default).",
 	"-1             Shows a list of the files in path1 only.",
 	"-2             Shows a list of the files in path2 only.",
 	"-d             Shows a list of different files that are in both paths.",
 	"-e             Shows a list of equal files.",
-	"-t=n --time=n  Time tolerance in secs when comparing files with option -f",
-	"-w=n       	Option to copy files when differences are found:",
-	"           	 n = 0: Do nothing (the default)",
-	"           	 n = 1: Copy different files from path1 to path2",
-	"           	 n = 2: Copy files that exist only in path1 to path2",
-	"           	 n = 3: Copy files only in path1 and different to path2"}
+	"-t=f --time=f  Time tolerance in secs when comparing files with option -f",
+	"                 f does not need to be an integer.",
+	"-w=n           Option to copy files when differences are found:",
+	"                 n = 0: Do nothing (the default)",
+	"                 n = 1: Copy different files from path1 to path2",
+	"                 n = 2: Copy files that exist only in path1 to path2",
+	"                 n = 3: Copy files only in path1 and different to path2"}
 
 type dirMembers map[string]bool
 
@@ -69,7 +70,7 @@ var listIn2Only *bool
 var listDifferent *bool
 var listEqual *bool
 var writeConfiguration *uint
-var timeTolerance int = 0
+var timeTolerance float64 = 0
 var copyIn1Only bool = false
 var copyDifferent bool = false
 
@@ -94,8 +95,8 @@ func main() {
 	listIn2Only = flag.Bool("2", false, "List files only in path 2.")
 	listDifferent = flag.Bool("d", false, "List files which are different.")
 	listEqual = flag.Bool("e", false, "List files which are the same.")
-	flag.IntVar(&timeTolerance, "t", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
-	flag.IntVar(&timeTolerance, "time", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
+	flag.Float64Var(&timeTolerance, "t", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
+	flag.Float64Var(&timeTolerance, "time", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
 	writeConfiguration = flag.Uint("w", 0, "Write: 0(disabled), 1(!= -> 2), 2(1->2), 3(1, != -> 2) (default 0)")
 	flag.Parse()
 	if help {
@@ -383,8 +384,9 @@ func compareFiles(fileChannel <-chan filePair) {
 			addDifferentPair(cmp.path1, cmp.path2)
 		} else if fastCompare {
 			file1Time := file1Info.ModTime()
-			file1MinTime := file1Time.Add(-time.Duration(timeTolerance) * time.Second)
-			file1MaxTime := file1Time.Add(time.Duration(timeTolerance) * time.Second)
+			file1MinTime := file1Time.Add(time.Duration(-timeTolerance * float64(time.Second)))
+			file1MaxTime := file1Time.Add(time.Duration(timeTolerance * float64(time.Second)))
+			fmt.Println(file1MaxTime, file1Time, file1MinTime)
 			if file2Info.ModTime().Before(file1MinTime) || file2Info.ModTime().After(file1MaxTime) {
 				copyDifferentFiles(cmp.path1, cmp.path2)
 				addDifferentPair(cmp.path1, cmp.path2)
