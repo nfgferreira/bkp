@@ -16,26 +16,32 @@ import (
 
 const VERSION = "0.0.1"
 
+const COPY_DIFFERENT uint = 1
+const COPY_IN_1_ONLY uint = 2
+const DELETE_IN_2_ONLY uint = 4
+
 var usage = [...]string{
 	"Usage: bkp [OPTIONS]... path1 path2",
 	"Compare the contents of path1 with path2.",
 	"",
 	"OPTIONS are:",
 	"-h --help      This help message",
-	"-v --version   Shows the program version",
-	"-f --fast      Fast compare. Files are considered equal if their modified",
-	"                 time and size match (not the default).",
+	"-v --version   Program version",
+	"-f --fast      Fast compare. Files are considered equal if their modification",
+	"                 time and size match. If this option is not selected, ",
+	"                 files are compared byte by byte.",
 	"-1             Shows a list of the files in path1 only.",
 	"-2             Shows a list of the files in path2 only.",
 	"-d             Shows a list of different files that are in both paths.",
 	"-e             Shows a list of equal files.",
-	"-t=f --time=f  Time tolerance in secs when comparing files with option -f",
-	"                 f does not need to be an integer.",
-	"-w=n           Option to copy files when differences are found:",
-	"                 n = 0: Do nothing (the default)",
-	"                 n = 1: Copy different files from path1 to path2",
-	"                 n = 2: Copy files that exist only in path1 to path2",
-	"                 n = 3: Copy files only in path1 and different to path2"}
+	"-t=T --time=T  Time tolerance in secs when comparing files with option -f.",
+	"                 The time T does not need to be an integer.",
+	"-w=n           Option to copy files when differences are found. Nothing is",
+	"                 done if this option is not provided or n is zero.",
+	"                 n is the addition of the following values:",
+	"                   1: To copy different files from path1 to path2",
+	"                   2: To copy files that exist only in path1 to path2",
+	"                   4: To delete files that exist only in path2"}
 
 type dirMembers map[string]bool
 
@@ -84,6 +90,7 @@ var writeConfiguration *uint
 var timeTolerance float64 = 0
 var copyIn1Only bool = false
 var copyDifferent bool = false
+var deleteIn2Only bool = false
 
 func badUsage() {
 	printUsage()
@@ -116,7 +123,7 @@ func main() {
 	listEqual = flag.Bool("e", false, "List files which are the same.")
 	flag.Float64Var(&timeTolerance, "t", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
 	flag.Float64Var(&timeTolerance, "time", 0, "Time tolerance when comparing file time and date if -f is enabled (default 0)")
-	writeConfiguration = flag.Uint("w", 0, "Write: 0(disabled), 1(!= -> 2), 2(1->2), 3(1, != -> 2) (default 0)")
+	writeConfiguration = flag.Uint("w", 0, "Actions to do when a difference is found (default nothing).")
 	flag.Parse()
 	if help {
 		printUsage()
@@ -126,12 +133,13 @@ func main() {
 		printVersion(executableName)
 		os.Exit(0)
 	}
-	if *writeConfiguration > 3 {
-		fmt.Println("Invalid value for -w parameter. Valid values are 0, 1, 2 and 3.")
+	if *writeConfiguration > 7 {
+		fmt.Println("Invalid value for -w parameter. Valid values are 0 through 7.")
 		os.Exit(1)
 	}
-	copyIn1Only = *writeConfiguration == 2 || *writeConfiguration == 3
-	copyDifferent = *writeConfiguration == 1 || *writeConfiguration == 3
+	copyIn1Only = *writeConfiguration&COPY_IN_1_ONLY != 0
+	copyDifferent = *writeConfiguration&COPY_DIFFERENT != 0
+	deleteIn2Only = *writeConfiguration&DELETE_IN_2_ONLY != 0
 	parameters := flag.Args()
 	if len(parameters) != 2 {
 		fmt.Println("Exactly two parameters were expected.")
@@ -142,6 +150,8 @@ func main() {
 	compare(parameters[0], parameters[1])
 
 	copyFilesIn1Only()
+
+	deleteFilesIn2Only()
 
 	// Now we sort the results and print them
 	if *listIn1Only {
@@ -529,6 +539,18 @@ func copyFilesIn1Only() {
 			ok := copyFile(fullPath1, fullPath2)
 			if ok != nil {
 				addElementInError(fullPath1 + "->" + fullPath2 + ": " + ok.Error())
+			}
+		}
+	}
+}
+
+func deleteFilesIn2Only() {
+	if deleteIn2Only {
+		for _, pair := range elementsIn2Only {
+			fullPath2 := pair.path2
+			ok := os.Remove(fullPath2)
+			if ok != nil {
+				addElementInError("Remove " + fullPath2 + ": " + ok.Error())
 			}
 		}
 	}
