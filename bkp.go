@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,7 +15,7 @@ import (
 	"time"
 )
 
-const VERSION = "0.0.1"
+const VERSION = "0.1"
 
 const COPY_DIFFERENT uint = 1
 const COPY_IN_1_ONLY uint = 2
@@ -40,8 +41,8 @@ var usage = [...]string{
 	"                 done if this option is not provided or n is zero.",
 	"                 n is the addition of the following values:",
 	"                   1: To copy different files from path1 to path2",
-	"                   2: To copy files that exist only in path1 to path2",
-	"                   4: To delete files that exist only in path2"}
+	"                   2: To copy files and dirs that exist only in path1 to path2",
+	"                   4: To delete files and dirs that exist only in path2"}
 
 type dirMembers map[string]bool
 
@@ -149,9 +150,12 @@ func main() {
 
 	compare(parameters[0], parameters[1])
 
-	copyFilesIn1Only()
-
+	// We delete the files in 2 only before copying the files in 1 only,
+	// because we may have a directory in 1 and a file in 2 with the
+	// same name or vice-versa.
 	deleteFilesIn2Only()
+
+	copyFilesIn1Only()
 
 	// Now we sort the results and print them
 	if *listIn1Only {
@@ -239,12 +243,12 @@ func main() {
 }
 
 // Slices tahat will keep elements existing only in one of the paths
-var elementsIn1Only []filePair
-var elementsIn2Only []filePair
-var numberOfDiffFileCopies int
-var elementsWhichAreEqual []filePair
-var elementsWhichAreDifferent []filePair
-var elementsInError []string
+var elementsIn1Only []filePair           // Used for reporting purposes and to provide the files that must be copied from 1 to 2
+var elementsIn2Only []filePair           // Used for reporting purposes and to provide the files in 2 that must be deleted
+var numberOfDiffFileCopies int           // Used only for reporting purposes.
+var elementsWhichAreEqual []filePair     // Used only for reporting purposes.
+var elementsWhichAreDifferent []filePair // Used only for reporting purposes.
+var elementsInError []string             // Errors are reported here so they are visible when the program stops.
 
 // Correspondings semaphores
 var sema1 = make(chan struct{}, 1)
@@ -254,6 +258,7 @@ var semaEqual = make(chan struct{}, 1)
 var semaDifferent = make(chan struct{}, 1)
 var semaError = make(chan struct{}, 1)
 
+// Add pair to elementsIn1Only
 func addElementIn1Only(path1 string, path2 string) {
 	sema1 <- struct{}{}
 	defer func() { <-sema1 }()
@@ -261,6 +266,7 @@ func addElementIn1Only(path1 string, path2 string) {
 	elementsIn1Only = append(elementsIn1Only, in1Only)
 }
 
+// Add pair to elementsIn2Only
 func addElementIn2Only(path1 string, path2 string) {
 	sema2 <- struct{}{}
 	defer func() { <-sema2 }()
@@ -268,6 +274,8 @@ func addElementIn2Only(path1 string, path2 string) {
 	elementsIn2Only = append(elementsIn2Only, in2Only)
 }
 
+// Add pair to elementsWhichAreEqual if they are equal.
+// That is used only for reporting purposes.
 func addEqualPair(path1 string, path2 string) {
 	semaEqual <- struct{}{}
 	defer func() { <-semaEqual }()
@@ -357,7 +365,7 @@ func traverse(dir1 string, dir2 string, fileChannel chan<- filePair) error {
 	filesInD1Only := d1.sub(&d2)
 	filesInD2Only := d2.sub(&d1)
 
-	// Register the elements in d1 only:
+	// Store the elements in d1 only in elementsIn1Only
 	if len(*filesInD1Only) != 0 {
 		for path1 := range *filesInD1Only {
 			if (*filesInD1Only)[path1] {
@@ -367,7 +375,7 @@ func traverse(dir1 string, dir2 string, fileChannel chan<- filePair) error {
 		}
 	}
 
-	// Register the elements in d1 only:
+	// Register the elements in d2 only:
 	if len(*filesInD2Only) != 0 {
 		for path2 := range *filesInD2Only {
 			if (*filesInD2Only)[path2] {
@@ -531,12 +539,21 @@ func copyFile(path1, path2 string) error {
 	return nil
 }
 
+// Copy the files that are in 1 only to 2, if the corresponding option is enabled.
+// Do not copy directories, even if they are in 1 only,
+// because they have already been created during traversal.
 func copyFilesIn1Only() {
 	if copyIn1Only {
 		for _, pair := range elementsIn1Only {
 			fullPath1 := pair.path1
 			fullPath2 := pair.path2
-			ok := copyFile(fullPath1, fullPath2)
+
+			var ok error
+			if pathIsDir(pair.path1) {
+				ok = copyDir(fullPath1, fullPath2)
+			} else {
+				ok = copyFile(fullPath1, fullPath2)
+			}
 			if ok != nil {
 				addElementInError(fullPath1 + "->" + fullPath2 + ": " + ok.Error())
 			}
@@ -544,16 +561,78 @@ func copyFilesIn1Only() {
 	}
 }
 
+// CopyDir recursively copies a directory tree.
+// We know both paths are directories, but we check anyways.
+func copyDir(src string, dst string) (err error) {
+	si, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !si.IsDir() {
+		return fmt.Errorf("source %s is not a directory", src)
+	}
+
+	_, err = os.Stat(dst)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		return fmt.Errorf("destination %s already exists", dst)
+	}
+
+	err = os.MkdirAll(dst, si.Mode())
+	if err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			err = copyDir(srcPath, dstPath)
+			if err != nil {
+				return err
+			}
+		} else {
+			// Skip symlinks for simplicity in this example
+			if entry.Type()&fs.ModeSymlink != 0 {
+				continue
+			}
+			err = copyFile(srcPath, dstPath)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 func deleteFilesIn2Only() {
 	if deleteIn2Only {
 		for _, pair := range elementsIn2Only {
 			fullPath2 := pair.path2
-			ok := os.Remove(fullPath2)
+			var ok error
+			if pathIsDir(pair.path2) {
+				ok = os.RemoveAll(pair.path2)
+			} else {
+				ok = os.Remove(fullPath2)
+			}
 			if ok != nil {
 				addElementInError("Remove " + fullPath2 + ": " + ok.Error())
 			}
 		}
 	}
+}
+
+func pathIsDir(path string) bool {
+	return path[len(path)-1] == '/'
 }
 
 // from https://stackoverflow.com/questions/13234749/golang-how-to-verify-number-of-processors-on-which-a-go-program-is-running
