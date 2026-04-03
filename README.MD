@@ -8,7 +8,7 @@ __bkp__ can:
 - Create a list of files that exist in both paths but are different
 - Create a list of files that exist in both paths and are equal
 - Accepts a time tolerance in fast comparison mode. If the files have the same size and their timestamps are inside the tolerance, the files are considered equal.
-- Take a configured action for the different files:
+- Optionally take one or more of the actions below:
   - Copy files from path1 to path2
   - Copy files and directories that exist only in path1 to path2
   - Delete files and directories that exist only in path2
